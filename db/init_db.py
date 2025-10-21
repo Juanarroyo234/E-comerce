@@ -1,19 +1,13 @@
 # db/init_db.py
-from sqlmodel import SQLModel, Session
+from sqlmodel import SQLModel
 from db.engine import engine
-
-# Importa tus modelos para que se creen las tablas
-from Modelos.Vendedor import Vendedor
-from Modelos.Administrador import Administrador
-from Modelos.Comprador import Comprador
-
+from Modelos import Administrador, Comprador, Usuario, Vendedor  # importa tus modelos
 
 def create_db_and_tables():
-    """Crea todas las tablas definidas en los modelos"""
+    """
+    Crea todas las tablas definidas en los modelos SQLModel
+    dentro de la base de datos conectada (Supabase o SQLite).
+    """
+    print("🛠️ Creando tablas en la base de datos (si no existen)...")
     SQLModel.metadata.create_all(engine)
-
-
-def get_session():
-    """Provee una sesión de base de datos para usar en los endpoints"""
-    with Session(engine) as session:
-        yield session
+    print("✅ Tablas creadas correctamente.")
