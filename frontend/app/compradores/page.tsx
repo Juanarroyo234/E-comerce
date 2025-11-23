@@ -1,113 +1,242 @@
+//app/compradores/page
 "use client";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { del, getJSON, postJSON, putJSON } from "@/lib/api";
+import type { Comprador } from "@/lib/types";
+import { useMemo, useState } from "react";
+import Modal from "@/components/Modal";
+import Pagination from "@/components/Pagination";
+import useDebounce from "@/hooks/useDebounce";
 
-import * as React from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api } from "@/lib/api";
-import { errorToText } from "@/lib/httpError";
+type EstadoCuenta = "activo" | "bloqueado"; // ajusta si tu enum usa "inactivo"
 
-type Comprador = {
+type CRow = {
   id: number;
+  id_comprador: number;
   nombre: string;
   email: string;
-  direccion: string | null;
-  telefono: string | null;
-  estado_cuenta: "activo" | "bloqueado";
-  id_comprador: number;
+  estado_cuenta: EstadoCuenta | string;
+  direccion: string;
+  telefono: string;
+  password?: string;
 };
 
 export default function CompradoresPage() {
   const qc = useQueryClient();
-  const [msg, setMsg] = React.useState<string | null>(null);
-  const [f, setF] = React.useState({
-    nombre: "", email: "", password: "",
-    id_comprador: "", direccion: "", telefono: "",
-    estado_cuenta: "activo" as "activo" | "bloqueado",
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
+  const offset = (page - 1) * pageSize;
+
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ["compradores", page, pageSize],
+    queryFn: () => getJSON<CRow[]>(`/compradores/?limit=${pageSize}&offset=${offset}`),
+    staleTime: 1000,
   });
 
-  const compradores = useQuery({
-    queryKey: ["compradores"],
-    queryFn: async () => (await api.get<Comprador[]>("/compradores")).data,
+  // ------- Crear -------
+  const [f, setF] = useState<{
+    id_comprador: string;
+    nombre: string;
+    email: string;
+    password: string;
+    estado_cuenta: EstadoCuenta;
+    direccion: string;
+    telefono: string;
+  }>({
+    id_comprador: "",
+    nombre: "",
+    email: "",
+    password: "",
+    estado_cuenta: "activo",
+    direccion: "",
+    telefono: "",
   });
 
-  const crear = useMutation({
-    mutationFn: async () => {
-      setMsg(null);
-      if (!f.nombre || !f.email || !f.password || !f.id_comprador) {
-        throw new Error("Completa nombre, email, password e ID comprador.");
-      }
-      const payload = {
-        nombre: f.nombre.trim(),
-        email: f.email.trim(),
-        password: f.password,
-        id_comprador: Number(f.id_comprador),
-        direccion: f.direccion.trim() || null,
-        telefono: f.telefono.trim() || null,
-        estado_cuenta: f.estado_cuenta,
-      };
-      return (await api.post("/compradores", payload)).data;
-    },
+  const [msg, setMsg] = useState<string | null>(null);
+
+  const createMut = useMutation({
+    mutationFn: (p: any) => postJSON<CRow>("/compradores/", p),
     onSuccess: () => {
       setMsg("✅ Comprador creado");
-      setF({ nombre:"", email:"", password:"", id_comprador:"", direccion:"", telefono:"", estado_cuenta:"activo" });
+      setF({
+        id_comprador: "",
+        nombre: "",
+        email: "",
+        password: "",
+        estado_cuenta: "activo",
+        direccion: "",
+        telefono: "",
+      });
       qc.invalidateQueries({ queryKey: ["compradores"] });
     },
-    onError: (e) => setMsg(`❌ ${errorToText(e)}`),
+    onError: (e: any) => setMsg(`❌ ${e?.response?.data?.detail ?? e.message}`),
   });
 
-  const eliminar = useMutation({
-    mutationFn: async (id: number) => (await api.delete(`/compradores/${id}`)).data,
+  const handleCreate = () => {
+    setMsg(null);
+    const idNum = Number(f.id_comprador);
+    if (!Number.isInteger(idNum) || idNum <= 0) return setMsg("❌ ID comprador debe ser entero positivo.");
+    if (!f.nombre || !f.email || !f.password) return setMsg("❌ Nombre, correo y password son obligatorios.");
+    if (!f.direccion || !f.telefono) return setMsg("❌ Dirección y teléfono son obligatorios.");
+
+    createMut.mutate({
+      id_comprador: idNum,
+      nombre: f.nombre,
+      email: f.email,
+      password: f.password,
+      estado_cuenta: f.estado_cuenta,
+      direccion: f.direccion,
+      telefono: f.telefono,
+    });
+  };
+
+  // ------- Eliminar -------
+  const deleteMut = useMutation({
+    mutationFn: (id: number) => del(`/compradores/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["compradores"] }),
+    onError: (e: any) => setMsg(`❌ ${e?.response?.data?.detail ?? e.message}`),
   });
+  const askDelete = (c: CRow) => {
+    if (confirm(`¿Eliminar comprador #${c.id}?`)) deleteMut.mutate(c.id);
+  };
+
+  // ------- Buscador -------
+  const [search, setSearch] = useState("");
+  const q = useDebounce(search);
+  const filtered = useMemo(() => {
+    if (!q) return data ?? [];
+    const s = q.toLowerCase();
+    return (data ?? []).filter(c =>
+      [c.nombre, c.email, c.direccion, c.telefono].some(x => (x ?? "").toLowerCase().includes(s))
+    );
+  }, [q, data]);
+
+  // ------- Editar -------
+  const [open, setOpen] = useState(false);
+  const [edit, setEdit] = useState<CRow | null>(null);
+  const [ef, setEf] = useState<CRow | null>(null);
+  const openEdit = (c: CRow) => { setEdit(c); setEf({ ...c }); setOpen(true); };
+
+  const updateMut = useMutation({
+    // El router NO acepta cambiar email ni id_comprador
+    mutationFn: (c: CRow) =>
+      putJSON<CRow>(`/compradores/${c.id}`, {
+        nombre: c.nombre,
+        password: c.password && c.password.trim() !== "" ? c.password.trim() : undefined,
+        estado_cuenta: c.estado_cuenta,
+        direccion: c.direccion,
+        telefono: c.telefono,
+      }),
+    onSuccess: () => { setOpen(false); qc.invalidateQueries({ queryKey: ["compradores"] }); },
+    onError: (e: any) => setMsg(`❌ ${e?.response?.data?.detail ?? e.message}`),
+  });
+
+  const handleSave = () => {
+    if (!ef || !edit) return;
+    // Limpiar password vacío para no sobreescribir
+    if (!ef.password || ef.password.trim() === "") delete (ef as any).password;
+    updateMut.mutate(ef);
+  };
 
   return (
-    <div className="p-6 max-w-6xl mx-auto space-y-4">
-      <h1 className="text-xl font-bold">Compradores</h1>
+    <section>
+      <h1 className="text-3xl font-bold mb-6">Compradores</h1>
 
-      <div className="bg-white/5 p-4 rounded-lg flex flex-wrap gap-2">
-        <input placeholder="Nombre" value={f.nombre} onChange={(e)=>setF({...f, nombre:e.target.value})}/>
-        <input placeholder="Email" value={f.email} onChange={(e)=>setF({...f, email:e.target.value})}/>
-        <input placeholder="Password" type="password" value={f.password} onChange={(e)=>setF({...f, password:e.target.value})}/>
-        <input placeholder="ID Comprador (número)" value={f.id_comprador} onChange={(e)=>setF({...f, id_comprador:e.target.value})}/>
-        <input placeholder="Dirección" value={f.direccion} onChange={(e)=>setF({...f, direccion:e.target.value})}/>
-        <input placeholder="Teléfono" value={f.telefono} onChange={(e)=>setF({...f, telefono:e.target.value})}/>
-        <select value={f.estado_cuenta} onChange={(e)=>setF({...f, estado_cuenta: e.target.value as any})}>
+      {/* Crear */}
+      <div className="bg-white rounded-xl shadow p-4 mb-6 grid gap-4 md:grid-cols-3 lg:grid-cols-4">
+        <div className="md:col-span-1">
+          <input className="input" placeholder="ID comprador (obligatorio)"
+                 value={f.id_comprador} onChange={e=>setF(s=>({...s, id_comprador:e.target.value}))}/>
+        </div>
+        <input className="input" placeholder="Nombre" value={f.nombre} onChange={e=>setF(s=>({...s, nombre:e.target.value}))}/>
+        <input className="input" placeholder="Correo" value={f.email} onChange={e=>setF(s=>({...s, email:e.target.value}))}/>
+        <input className="input" type="password" placeholder="Password" value={f.password} onChange={e=>setF(s=>({...s, password:e.target.value}))}/>
+        <select className="input" value={f.estado_cuenta} onChange={e=>setF(s=>({...s, estado_cuenta:e.target.value as EstadoCuenta}))}>
           <option value="activo">activo</option>
           <option value="bloqueado">bloqueado</option>
         </select>
-        <button onClick={()=>crear.mutate()} disabled={crear.isPending}>Crear</button>
-        {msg && <p className="w-full mt-2">{msg}</p>}
+        <input className="input" placeholder="Dirección" value={f.direccion} onChange={e=>setF(s=>({...s, direccion:e.target.value}))}/>
+        <input className="input" placeholder="Teléfono" value={f.telefono} onChange={e=>setF(s=>({...s, telefono:e.target.value}))}/>
+        <div className="md:col-span-3 lg:col-span-4">
+          <button className="btn-primary" onClick={handleCreate} disabled={createMut.isPending}>
+            {createMut.isPending ? "Creando…" : "Crear"}
+          </button>
+          {msg && <span className="ml-3 text-sm">{msg}</span>}
+        </div>
       </div>
 
-      <div className="overflow-x-auto bg-white/5 rounded-lg">
-        <table className="w-full">
-          <thead>
+      {/* Buscador */}
+      <div className="mb-3">
+        <input className="input max-w-sm" placeholder="Buscar por nombre, correo, dirección o teléfono…"
+               value={search} onChange={e=>setSearch(e.target.value)}/>
+      </div>
+
+      {/* Tabla */}
+      <div className="bg-white rounded-xl shadow p-4">
+        <table className="w-full text-sm">
+          <thead className="bg-slate-100">
             <tr>
-              <th className="text-left p-2">ID</th>
-              <th className="text-left p-2">Nombre</th>
-              <th className="text-left p-2">Correo</th>
-              <th className="text-left p-2">Dirección</th>
-              <th className="text-left p-2">Teléfono</th>
-              <th className="text-left p-2">Estado</th>
-              <th/>
+              <th className="th">ID</th>
+              <th className="th">ID Comprador</th>
+              <th className="th">Nombre</th>
+              <th className="th">Correo</th>
+              <th className="th">Estado</th>
+              <th className="th">Dirección</th>
+              <th className="th">Teléfono</th>
+              <th className="th text-right">Acciones</th>
             </tr>
           </thead>
           <tbody>
-            {compradores.data?.map((c) => (
-              <tr key={c.id} className="border-t border-white/10">
-                <td className="p-2">{c.id}</td>
-                <td className="p-2">{c.nombre}</td>
-                <td className="p-2">{c.email}</td>
-                <td className="p-2">{c.direccion}</td>
-                <td className="p-2">{c.telefono}</td>
-                <td className="p-2">{c.estado_cuenta}</td>
-                <td className="p-2">
-                  <button className="text-red-500" onClick={()=>eliminar.mutate(c.id)}>Eliminar</button>
+            {isLoading && <tr><td className="py-6 text-center" colSpan={8}>Cargando…</td></tr>}
+            {isError && <tr><td className="py-6 text-center" colSpan={8}>Error al cargar.</td></tr>}
+            {(filtered ?? []).map(c=>(
+              <tr key={c.id} className="border-t">
+                <td className="td">{c.id}</td>
+                <td className="td">{c.id_comprador}</td>
+                <td className="td">{c.nombre}</td>
+                <td className="td">{c.email}</td>
+                <td className="td">{c.estado_cuenta}</td>
+                <td className="td">{c.direccion}</td>
+                <td className="td">{c.telefono}</td>
+                <td className="td text-right flex justify-end gap-2">
+                  <button className="btn-primary !px-3" onClick={()=>openEdit(c)}>Editar</button>
+                  <button className="btn-danger" onClick={()=>askDelete(c)}>Eliminar</button>
                 </td>
               </tr>
             ))}
+            {!isLoading && !isError && filtered && filtered.length === 0 && (
+              <tr><td className="py-6 text-center" colSpan={8}>Sin resultados.</td></tr>
+            )}
           </tbody>
         </table>
+        <Pagination page={page} pageSize={pageSize} onPage={setPage}/>
       </div>
-    </div>
+
+      {/* Modal editar */}
+      <Modal open={open} onClose={()=>setOpen(false)} title={`Editar comprador #${edit?.id}`}>
+        {ef && (
+          <div className="grid gap-3 md:grid-cols-2">
+            <input className="input" value={ef.nombre} onChange={e=>setEf({...ef, nombre:e.target.value})}/>
+            {/* Email mostrado pero no editable (no lo acepta el PUT) */}
+            <input className="input bg-slate-50" value={ef.email} readOnly />
+            <select className="input" value={ef.estado_cuenta as EstadoCuenta} onChange={e=>setEf({...ef, estado_cuenta: e.target.value as EstadoCuenta})}>
+              <option value="activo">activo</option>
+              <option value="bloqueado">bloqueado</option>
+            </select>
+            <input className="input" value={ef.direccion} onChange={e=>setEf({...ef, direccion:e.target.value})}/>
+            <input className="input" value={ef.telefono} onChange={e=>setEf({...ef, telefono:e.target.value})}/>
+            <input className="input md:col-span-2" type="password" placeholder="(opcional) nuevo password"
+                   onChange={e=>setEf({...ef, password: e.target.value || (edit?.password ?? "")})}/>
+            <div className="md:col-span-2 flex justify-end gap-2">
+              <button className="btn-primary" onClick={handleSave} disabled={updateMut.isPending}>
+                {updateMut.isPending ? "Guardando…" : "Guardar"}
+              </button>
+              <button className="btn-danger" onClick={()=>setOpen(false)}>Cancelar</button>
+            </div>
+          </div>
+        )}
+      </Modal>
+    </section>
   );
 }
+

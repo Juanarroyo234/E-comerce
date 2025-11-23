@@ -1,34 +1,32 @@
-from typing import Optional, TYPE_CHECKING
-from datetime import datetime
-from sqlmodel import SQLModel, Field, Relationship
+# backend/Modelos/Producto.py
+from __future__ import annotations
 
-if TYPE_CHECKING:
-    from .Vendedor import Vendedor
-    from .Categoria import Categoria
+from typing import Optional
+from datetime import datetime
+from sqlmodel import SQLModel, Field
+
 
 class Producto(SQLModel, table=True):
     __tablename__ = "productos"
 
-    id: Optional[int] = Field(default=None, primary_key=True)
-    tenant_id: int = Field(index=True)
+    id: Optional[int] = Field(default=None, primary_key=True, index=True)
+    tenant_id: int = Field(default=1, index=True)
 
-    nombre: str = Field(max_length=100)
-    descripcion: Optional[str] = Field(default=None, max_length=255)
+    nombre: str
+    descripcion: Optional[str] = None
     precio: float
-    stock: int = Field(default=0)
+    stock: int
+    imagen_url: Optional[str] = None
+    destacado: bool = Field(default=False)
 
-    category_id: Optional[int] = Field(default=None, foreign_key="categorias.id")
+    
+    vendedor_id: int = Field(foreign_key="vendedores.id", index=True)
+    category_id: Optional[int] = Field(default=None, foreign_key="categorias.id", index=True)
 
-    external_id: Optional[str] = Field(default=None, index=True)
-    source: Optional[str] = Field(default=None, index=True)
+    external_id: Optional[str] = None
+    source: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    updated_at: datetime = Field(default_factory=datetime.utcnow, index=True)
 
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
-
-    # 👇 FK debe referir a 'vendedores.id_vendedor'
-    vendedor_id: Optional[int] = Field(default=None, foreign_key="vendedores.id_vendedor")
-
-    categoria: Optional["Categoria"] = Relationship()
-    vendedor: Optional["Vendedor"] = Relationship(back_populates="productos")
-
-
+    # ❌ SIN Relationship aquí
+    # Nos basta con vendedor_id y category_id para hacer joins/filter cuando se necesite

@@ -1,129 +1,94 @@
-# Routers/categorias.py
-from fastapi import APIRouter, Depends, HTTPException
-from sqlmodel import Session, select
-from datetime import datetime
-
+# backend/Routers/Categoria.py
+from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlmodel import SQLModel, Field, Session, select
 from backend.db.engine import get_session
-from backend.Modelos.Categoria import (
-    Categoria, CategoriaCreate, CategoriaUpdate, CategoriaRead
-)
+from backend.Modelos.Categoria import Categoria  # <-- solo el modelo de BD
 
-router = APIRouter(
-    prefix="/tenants/{tenant_id}/categorias",
-    tags=["categorias"]
-)
+router = APIRouter(prefix="/categorias", tags=["Categorias"])
 
-def _slug_exists(db: Session, tenant_id: int, slug: str, exclude_id: int | None = None) -> bool:
-    stmt = select(Categoria).where(
-        Categoria.tenant_id == tenant_id,
-        Categoria.slug == slug
-    )
-    cat = db.exec(stmt).first()
-    if not cat:
-        return False
-    if exclude_id and cat.id == exclude_id:
-        return False
-    return True
+# ========= DTOs (Schemas) =========
+class CategoriaBase(SQLModel):
+    nombre: str
+    descripcion: Optional[str] = None
 
+class CategoriaCreate(CategoriaBase):
+    pass
 
-@router.post("", response_model=CategoriaRead)
-def crear_categoria(
-    tenant_id: int,
-    data: CategoriaCreate,
-    db: Session = Depends(get_session)
-):
-    if _slug_exists(db, tenant_id, data.slug):
-        raise HTTPException(status_code=400, detail="El slug ya existe para este tenant.")
+class CategoriaUpdate(SQLModel):
+    nombre: Optional[str] = None
+    descripcion: Optional[str] = None
 
-    cat = Categoria(
-        tenant_id=tenant_id,
-        slug=data.slug.strip(),
-        nombre=data.nombre.strip(),
-        descripcion=(data.descripcion or None),
-    )
-    db.add(cat)
-    db.commit()
-    db.refresh(cat)
-    return cat
+class CategoriaRead(CategoriaBase):
+    id: int
 
+# ========= Endpoints =========
+@router.post("/", response_model=CategoriaRead, status_code=status.HTTP_201_CREATED)
+def crear_categoria(payload: CategoriaCreate, session: Session = Depends(get_session)):
+    # Validar nombre único si agregaste UniqueConstraint en el modelo
+    existe = session.exec(select(Categoria).where(Categoria.nombre == payload.nombre)).first()
+    if existe:
+        raise HTTPException(status_code=400, detail="La categoría ya existe")
 
-@router.get("", response_model=list[CategoriaRead])
+    obj = Categoria(nombre=payload.nombre, descripcion=payload.descripcion)
+    session.add(obj)
+    session.commit()
+    session.refresh(obj)
+    return CategoriaRead.model_validate(obj, from_attributes=True)
+
+@router.get("/", response_model=List[CategoriaRead])
 def listar_categorias(
-    tenant_id: int,
-    q: str | None = None,
-    db: Session = Depends(get_session)
+    session: Session = Depends(get_session),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    q: Optional[str] = Query(None, description="Filtro por nombre (contains)"),
 ):
-    stmt = select(Categoria).where(Categoria.tenant_id == tenant_id)
+    stmt = select(Categoria).offset(offset).limit(limit)
     if q:
-        stmt = stmt.where(Categoria.nombre.ilike(f"%{q}%"))
-    return db.exec(stmt).all()
-
+        # Filtro “contains” (lado Python para compatibilidad cross-DB)
+        rows = session.exec(stmt).all()
+        rows = [c for c in rows if q.lower() in c.nombre.lower()]
+    else:
+        rows = session.exec(stmt).all()
+    return [CategoriaRead.model_validate(c, from_attributes=True) for c in rows]
 
 @router.get("/{categoria_id}", response_model=CategoriaRead)
-def obtener_categoria(
-    tenant_id: int,
-    categoria_id: int,
-    db: Session = Depends(get_session)
-):
-    cat = db.get(Categoria, categoria_id)
-    if not cat or cat.tenant_id != tenant_id:
-        raise HTTPException(status_code=404, detail="Categoría no encontrada.")
-    return cat
-
-
-@router.get("/by-slug/{slug}", response_model=CategoriaRead)
-def obtener_por_slug(
-    tenant_id: int,
-    slug: str,
-    db: Session = Depends(get_session)
-):
-    stmt = select(Categoria).where(
-        Categoria.tenant_id == tenant_id,
-        Categoria.slug == slug
-    )
-    cat = db.exec(stmt).first()
-    if not cat:
-        raise HTTPException(status_code=404, detail="Categoría no encontrada.")
-    return cat
-
+def obtener_categoria(categoria_id: int, session: Session = Depends(get_session)):
+    obj = session.get(Categoria, categoria_id)
+    if not obj:
+        raise HTTPException(status_code=404, detail="Categoría no encontrada")
+    return CategoriaRead.model_validate(obj, from_attributes=True)
 
 @router.put("/{categoria_id}", response_model=CategoriaRead)
 def actualizar_categoria(
-    tenant_id: int,
-    categoria_id: int,
-    data: CategoriaUpdate,
-    db: Session = Depends(get_session)
+    categoria_id: int, payload: CategoriaUpdate, session: Session = Depends(get_session)
 ):
-    cat = db.get(Categoria, categoria_id)
-    if not cat or cat.tenant_id != tenant_id:
-        raise HTTPException(status_code=404, detail="Categoría no encontrada.")
+    obj = session.get(Categoria, categoria_id)
+    if not obj:
+        raise HTTPException(status_code=404, detail="Categoría no encontrada")
 
-    if data.slug and _slug_exists(db, tenant_id, data.slug, exclude_id=cat.id):
-        raise HTTPException(status_code=400, detail="El slug ya existe para este tenant.")
+    data = payload.model_dump(exclude_unset=True)
 
-    if data.slug is not None:
-        cat.slug = data.slug.strip()
-    if data.nombre is not None:
-        cat.nombre = data.nombre.strip()
-    if data.descripcion is not None:
-        cat.descripcion = data.descripcion
+    # Si se cambia el nombre, validar unicidad
+    nuevo_nombre = data.get("nombre")
+    if nuevo_nombre and nuevo_nombre != obj.nombre:
+        conflict = session.exec(select(Categoria).where(Categoria.nombre == nuevo_nombre)).first()
+        if conflict:
+            raise HTTPException(status_code=400, detail="Ya existe una categoría con ese nombre")
 
-    cat.updated_at = datetime.utcnow()
-    db.add(cat)
-    db.commit()
-    db.refresh(cat)
-    return cat
+    for k, v in data.items():
+        setattr(obj, k, v)
 
+    session.add(obj)
+    session.commit()
+    session.refresh(obj)
+    return CategoriaRead.model_validate(obj, from_attributes=True)
 
-@router.delete("/{categoria_id}")
-def eliminar_categoria(
-    tenant_id: int,
-    categoria_id: int,
-    db: Session = Depends(get_session)
-):
-    cat = db.get(Categoria, categoria_id)
-    if not cat or cat.tenant_id != tenant_id:
-        raise HTTPException(status_code=404, detail="Categoría no encontrada.")
-    db.delete(cat)
-    db.commit()
-    return {"ok": True}
+@router.delete("/{categoria_id}", status_code=status.HTTP_204_NO_CONTENT)
+def eliminar_categoria(categoria_id: int, session: Session = Depends(get_session)):
+    obj = session.get(Categoria, categoria_id)
+    if not obj:
+        raise HTTPException(status_code=404, detail="Categoría no encontrada")
+    session.delete(obj)
+    session.commit()
+    return

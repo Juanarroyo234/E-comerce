@@ -1,26 +1,30 @@
-from typing import Optional, List, TYPE_CHECKING
-from sqlmodel import SQLModel, Field, Relationship
-from sqlalchemy import Column, Integer  # ✅ import correcto
+# backend/Modelos/Vendedor.py
+from __future__ import annotations
 
-if TYPE_CHECKING:
-    from .Producto import Producto
+from typing import Optional
+from datetime import datetime
+
+from sqlmodel import SQLModel, Field
+from sqlalchemy import UniqueConstraint
+from backend.Modelos.common import EstadoCuenta
+
 
 class Vendedor(SQLModel, table=True):
     __tablename__ = "vendedores"
-
-    # ⛳︎ NO pongas primary_key en Field si ya lo pones en Column
-    id: Optional[int] = Field(
-        default=None,
-        sa_column=Column("id_vendedor", Integer, primary_key=True)  # ✅ PK aquí
+    __table_args__ = (
+        UniqueConstraint("id_vendedor", name="uq_vendedores_id_vendedor"),
+        UniqueConstraint("email", name="uq_vendedores_email"),
     )
 
+    id: Optional[int] = Field(default=None, primary_key=True, index=True)
+    id_vendedor: int = Field(index=True, description="ID manual visible del negocio")
     nombre: str
     email: str
-    telefono: Optional[str] = None
-    empresa: Optional[str] = None
-    direccion: Optional[str] = None
     password: str
-    estado_cuenta: str = "activo"
+    estado_cuenta: EstadoCuenta = Field(default=EstadoCuenta.activo)
+    telefono: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    updated_at: datetime = Field(default_factory=datetime.utcnow, index=True)
 
-    productos: List["Producto"] = Relationship(back_populates="vendedor")
-
+    # ❌ SIN relaciones ORM aquí
+    # productos y tienda los manejamos via consultas usando vendedor.id
