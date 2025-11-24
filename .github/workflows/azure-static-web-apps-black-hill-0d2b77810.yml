@@ -42,20 +42,20 @@ jobs:
         env:
           NODE_VERSION: '20.11.0'
 
-          # 🔥 Variables de entorno que Next necesita para construir
+          # Variables de entorno de Next.js
           NEXT_PUBLIC_API_BASE_URL: ${{ secrets.NEXT_PUBLIC_API_BASE_URL }}
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
 
         with:
-          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN_BLACK_HILL_0D2B77810 }}
+          # ❌ ELIMINADO el token porque tu Static Web App usa OIDC con GitHub
+          # azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN_BLACK_HILL_0D2B77810 }}
+          
           action: "upload"
-          ###### Repository/Build Configurations ######
           app_location: "/frontend"
           api_location: ""
           output_location: ""
           github_id_token: ${{ steps.idtoken.outputs.result }}
-          ###### End of Repository/Build Configurations ######
 
   close_pull_request_job:
     if: github.event_name == 'pull_request' && github.event.action == 'closed'
@@ -68,4 +68,5 @@ jobs:
         uses: Azure/static-web-apps-deploy@v1
         with:
           action: "close"
+          github_id_token: ${{ steps.idtoken.outputs.result }}
 
