@@ -40,14 +40,20 @@ jobs:
         id: builddeploy
         uses: Azure/static-web-apps-deploy@v1
         env:
-          NODE_VERSION: '20.11.0'   # <-- AQUÍ va el Node correcto
+          NODE_VERSION: '20.11.0'
+
+          # 🔥 Variables de entorno que Next necesita para construir
+          NEXT_PUBLIC_API_BASE_URL: ${{ secrets.NEXT_PUBLIC_API_BASE_URL }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+
         with:
           azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN_BLACK_HILL_0D2B77810 }}
           action: "upload"
           ###### Repository/Build Configurations ######
-          app_location: "/frontend" 
-          api_location: "" 
-          output_location: "" 
+          app_location: "/frontend"
+          api_location: ""
+          output_location: ""
           github_id_token: ${{ steps.idtoken.outputs.result }}
           ###### End of Repository/Build Configurations ######
 
